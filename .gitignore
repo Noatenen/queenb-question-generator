@@ -1,0 +1,11 @@
+# build / IDE
+bin/
+obj/
+.vs/
+.idea/
+.DS_Store
+
+# secrets
+appsettings.json
+appsettings.Development.json
+
