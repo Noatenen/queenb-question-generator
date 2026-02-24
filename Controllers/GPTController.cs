@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Prog3_WebApi_Javascript.DTOs;
+using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 
 namespace Prog3_WebApi_Javascript.Controllers
@@ -9,174 +10,195 @@ namespace Prog3_WebApi_Javascript.Controllers
     public class GPTController : ControllerBase
     {
         private readonly HttpClient _client;
+        private readonly IConfiguration _config;
+        private readonly string _model = "gpt-4o";
 
         public GPTController(IConfiguration config)
         {
+            _config = config;
+
             _client = new HttpClient();
-
-            string apiKey = config.GetValue<string>("OpenAI:Key");
-            string auth = "Bearer " + apiKey;
-            _client.DefaultRequestHeaders.Add("Authorization", auth);
+            string apiKey = _config.GetValue<string>("OpenAI:Key") ?? "";
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
 
-        // =========================================================
-        // DALLE
-        // =========================================================
-        [HttpPost("Dalle")]
-        public async Task<IActionResult> Dalle(ImagePrompt imagePrompt)
+        // ===============================
+        // 1) Generate question from PDF
+        // ===============================
+        [HttpPost("GPTChatFromPdf")]
+        public async Task<IActionResult> GPTChatFromPdf(QuestionPrompt promptFromUser)
         {
-            if (imagePrompt == null || string.IsNullOrWhiteSpace(imagePrompt.Prompt))
-                return BadRequest("Prompt is empty.");
+            // 1. שליפת IDs מהקונפיגורציה
+            string juniorId = _config.GetValue<string>("OpenAI:JuniorPdfId") ?? "";
+            string seniorId = _config.GetValue<string>("OpenAI:SeniorPdfId") ?? "";
 
-            // DALL·E עובד לרוב טוב יותר עם פרומפט באנגלית
-// DALL·E עובד לרוב טוב יותר עם פרומפט באנגלית
-            string promptToSend =
-                "Flat vector illustration, clean modern UI style, pastel pink background, purple accents, " +
-                "teen girl programmer with laptop, friendly educational vibe, simple clean shapes, " +
-                "no text, no letters, no logos, no watermark, high quality, consistent style. " +
-                "Scene hint: " + imagePrompt.Prompt;
+            string fileIdToUse = (promptFromUser.Level == "senior") ? seniorId : juniorId;
 
+            if (string.IsNullOrWhiteSpace(fileIdToUse))
+                return BadRequest("FileId is missing in appsettings.json.");
 
-            string model = "dall-e-2";
-            string size = "256x256";
+            string endpoint = "https://api.openai.com/v1/responses";
 
-            DalleRequest request = new DalleRequest()
-            {
-                prompt = promptToSend,
-                model = model,
-                size = size
-            };
-
-            string endpoint = "https://api.openai.com/v1/images/generations";
-            var res = await _client.PostAsJsonAsync(endpoint, request);
-
-            if (!res.IsSuccessStatusCode)
-            {
-                var err = await res.Content.ReadAsStringAsync();
-                return BadRequest("problem: " + err);
-            }
-
-            JsonObject? jsonFromDalle = await res.Content.ReadFromJsonAsync<JsonObject>();
-            if (jsonFromDalle == null)
-                return BadRequest("empty");
-
-            string url = jsonFromDalle["data"]?[0]?["url"]?.ToString() ?? "";
-            if (string.IsNullOrWhiteSpace(url))
-                return BadRequest("No image url returned.");
-
-            return Ok(url);
-        }
-
-        // =========================================================
-        // GPT – Generate QueenB style question
-        // =========================================================
-        [HttpPost("GPTChat")]
-        public async Task<IActionResult> GPTChat(QuestionPrompt questionPromptFromUser)
-        {
-            if (questionPromptFromUser == null)
-                return BadRequest("Request is null.");
-
-            // בדיקות בסיסיות כדי לא לקבל nulls
-            if (string.IsNullOrWhiteSpace(questionPromptFromUser.Domain) ||
-                string.IsNullOrWhiteSpace(questionPromptFromUser.Concept) ||
-                string.IsNullOrWhiteSpace(questionPromptFromUser.QuestionType) ||
-                string.IsNullOrWhiteSpace(questionPromptFromUser.Level))
-            {
-                return BadRequest("Missing fields in QuestionPrompt.");
-            }
-
-            string endpoint = "https://api.openai.com/v1/chat/completions";
-            string model = "gpt-3.5-turbo";
-
-            int max_tokens = 450;
-            double tmpr = 0.7;
-
-            // System – נועל עברית לשדות טקסט, ורק code באנגלית
             string systemMsg =
-                "את/ה מדריכת QueenB שמנסחת שאלות קצרות לבנות כיתה ח׳–ט׳.\n" +
-                "הממשק בעברית.\n" +
-                "חובה: כל הטקסטים בעברית בלבד.\n" +
-                "חריג יחיד: השדה code חייב להיות באנגלית בלבד (מילות מפתח ושמות משתנים).\n" +
-                "הכי חשוב: זו שאלת תוצאה.\n" +
-                "כלומר: נותנים קוד ואז שואלים מה יודפס/מה תהיה התוצאה, והאפשרויות הן תוצאות קצרות.\n" +
-                "אסור לכתוב הסברים ארוכים בשאלה עצמה.\n" +
-                "להחזיר JSON בלבד, בלי שום טקסט מסביב.";
+                "את/ה מדריכת QueenB שמנסחת שאלות קצרות לבנות כיתה ח׳–ט׳. " +
+                "הממשק בעברית. חובה: כל הטקסטים בעברית בלבד. חריג יחיד: השדה code באנגלית. " +
+                "המטרה: שאלה קצרה מסוג 'מה תהיה התוצאה?'. " +
+                "אסור להמציא חומר שלא מופיע ב-PDF. " +
+                "החזירי JSON בלבד, ללא Markdown וללא טקסט נוסף. " +
+                "הקפידי על המפתחות הבאים בדיוק: questionType, title, code, questionText, options, correctIndex, openAnswerExample, expectedKeyPoints, explanation." +
+                "Return ONLY valid json.";
 
-
-
-            // User – בקשה מפורטת עם פורמט JSON
             string userPrompt =
-                "צרי שאלה אחת בסגנון QueenB.\n" +
-                $"תחום: {questionPromptFromUser.Domain}\n" +
-                $"מושג: {questionPromptFromUser.Concept}\n" +
-                $"סוג שאלה: {questionPromptFromUser.QuestionType} (mcq/open)\n" +
-                $"רמה: {questionPromptFromUser.Level}\n\n" +
-
-                "כללים:\n" +
-                "1) השאלה חייבת להיות מסוג 'מה תהיה התוצאה?' / 'מה יודפס?' / 'מה יחזור מהפונקציה?'.\n" +
-                "2) code: עד 10 שורות, באנגלית בלבד.\n" +
-                "3) questionText: משפט אחד קצר בעברית.\n" +
-                "4) אם mcq: בדיוק 3 תשובות קצרות שהן תוצאה (למשל: 291, undefined, 'Hello', שגיאה).\n" +
-                "   לא לכתוב תשובות כמו 'יקפיץ הודעה' – רק תוצאה ממשית.\n" +
-                "5) correctIndex: 0/1/2.\n" +
-                "6) explanation: 1–2 משפטים בעברית שמסבירים למה.\n" +
-                "7) להחזיר JSON בלבד בפורמט:\n" +
-                "{\n" +
-                "  \"questionType\": \"mcq\" או \"open\",\n" +
-                "  \"title\": \"כותרת קצרה בעברית\",\n" +
-                "  \"code\": \"...\",\n" +
-                "  \"questionText\": \"...\",\n" +
-                "  \"options\": [\"...\",\"...\",\"...\"] או null,\n" +
-                "  \"correctIndex\": 0/1/2 או null,\n" +
-                "  \"openAnswerExample\": \"...\" או null,\n" +
-                "  \"expectedKeyPoints\": [\"...\", \"...\"] או null,\n" +
-                "  \"explanation\": \"...\"\n" +
-                "}";
+                $"צרי שאלה אחת בסגנון QueenB בתחום {promptFromUser.Domain}, מושג {promptFromUser.Concept}, " +
+                $"סוג {promptFromUser.QuestionType}, רמה {promptFromUser.Level}. " +
+                "חוקים: קוד באנגלית (עד 10 שורות). " +
+                "אם questionType הוא mcq חובה להחזיר options (3 אפשרויות) ו-correctIndex. " +
+                "אם questionType הוא open אפשר להחזיר openAnswerExample ו-expectedKeyPoints."+
+                "Return the answer as valid json only.";
 
 
-            GPTRequest request = new GPTRequest()
+            // 2. בקשה ל-Responses API
+            var requestBody = new Dictionary<string, object?>
             {
-                max_tokens = max_tokens,
-                model = model,
-                response_format = new { type = "json_object" },
-                temperature = tmpr,
-                messages = new List<Message>()
+                ["model"] = _model,
+                ["max_output_tokens"] = 800,
+                ["temperature"] = 0.7,
+                ["instructions"] = systemMsg,
+
+                // הכי חשוב: כופה JSON תקין
+                ["text"] = new
                 {
-                    new Message
-                    {
-                        role = "system",
-                        content = systemMsg
-                    },
-                    new Message
-                    {
+                    format = new { type = "json_object" }
+                },
+
+                ["input"] = new object[]
+                {
+                    new {
                         role = "user",
-                        content = userPrompt
+                        content = new object[]
+                        {
+                            new { type = "input_file", file_id = fileIdToUse },
+                            new { type = "input_text", text = userPrompt }
+                        }
                     }
                 }
             };
 
-            var res = await _client.PostAsJsonAsync(endpoint, request);
+            if (!string.IsNullOrWhiteSpace(promptFromUser.PreviousResponseID))
+                requestBody["previous_response_id"] = promptFromUser.PreviousResponseID;
 
+            var res = await _client.PostAsJsonAsync(endpoint, requestBody);
+
+            var raw = await res.Content.ReadAsStringAsync();
             if (!res.IsSuccessStatusCode)
             {
-                var err = await res.Content.ReadAsStringAsync();
-                return BadRequest("problem: " + err);
+                // מחזירים את ההודעה המדויקת כדי שתראי מה OpenAI מחזיר
+                return BadRequest(raw);
             }
 
-            JsonObject? jsonFromGPT = await res.Content.ReadFromJsonAsync<JsonObject>();
-            if (jsonFromGPT == null)
-                return BadRequest("empty");
+            // 3. חילוץ output_text
+            var root = JsonNode.Parse(raw) as JsonObject;
 
-            string content = jsonFromGPT["choices"]?[0]?["message"]?["content"]?.ToString() ?? "";
-            if (string.IsNullOrWhiteSpace(content))
-                return BadRequest("No content returned.");
+            string responseId = root?["id"]?.GetValue<string>();
+            string outputText = null;
 
-            // מחזירים JSON אמיתי כדי ש-Swagger יציג יפה
-            JsonNode? parsed = JsonNode.Parse(content);
-            if (parsed == null)
-                return BadRequest("Model returned invalid JSON.");
+            var outputArray = root?["output"] as JsonArray;
+            if (outputArray != null)
+            {
+                foreach (var outItem in outputArray)
+                {
+                    var contentArray = outItem?["content"] as JsonArray;
+                    if (contentArray == null) continue;
 
-            return Ok(parsed);
+                    foreach (var c in contentArray)
+                    {
+                        if (c?["type"]?.GetValue<string>() == "output_text")
+                        {
+                            outputText = c?["text"]?.GetValue<string>();
+                            break;
+                        }
+                    }
+
+                    if (outputText != null) break;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(outputText))
+                outputText = outputText.Replace("```json", "").Replace("```", "").Trim();
+
+            return Ok(new { text = outputText, responseID = responseId });
+        }
+
+        // ===============================
+        // 2) Upload PDF (Swagger only / backstage)
+        // ===============================
+        [HttpPost("UploadPdf")]
+        public async Task<IActionResult> UploadPdf([FromForm] FileUploadRequest req)
+        {
+            // אופציונלי: הגנה עם מפתח (מומלץ אם את לא רוצה שאחרים יוכלו להעלות)
+            // הוסיפי ב-appsettings: "AdminUploadKey": "SOME_SECRET"
+            string adminKey = _config.GetValue<string>("AdminUploadKey") ?? "";
+            if (!string.IsNullOrWhiteSpace(adminKey))
+            {
+                if (!Request.Headers.TryGetValue("X-ADMIN-KEY", out var sentKey) || sentKey != adminKey)
+                    return Unauthorized("Not allowed.");
+            }
+
+            if (req?.File == null || req.File.Length == 0)
+                return BadRequest("No file.");
+
+            var ext = Path.GetExtension(req.File.FileName).ToLowerInvariant();
+            if (ext != ".pdf")
+                return BadRequest("File must be a PDF.");
+
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent("user_data"), "purpose");
+
+            using var fileStream = req.File.OpenReadStream();
+            using var fileContent = new StreamContent(fileStream);
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+
+            form.Add(fileContent, "file", req.File.FileName);
+
+            var response = await _client.PostAsync("https://api.openai.com/v1/files", form);
+
+            var raw = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+                return BadRequest(raw);
+
+            var json = JsonNode.Parse(raw) as JsonObject;
+            var fileId = json?["id"]?.ToString();
+
+            return Ok(fileId);
+        }
+
+        // ===============================
+        // 3) DALL·E image
+        // ===============================
+        [HttpPost("Dalle")]
+        public async Task<IActionResult> Dalle(ImagePrompt imagePrompt)
+        {
+            if (imagePrompt == null || string.IsNullOrWhiteSpace(imagePrompt.Prompt))
+                return BadRequest("Empty prompt.");
+
+            var request = new
+            {
+                model = "dall-e-2",
+                prompt = "Flat vector illustration, teen girl programmer, " + imagePrompt.Prompt,
+                size = "256x256"
+            };
+
+            var res = await _client.PostAsJsonAsync("https://api.openai.com/v1/images/generations", request);
+
+            var raw = await res.Content.ReadAsStringAsync();
+            if (!res.IsSuccessStatusCode)
+                return BadRequest(raw);
+
+            var json = JsonNode.Parse(raw) as JsonObject;
+            var url = json?["data"]?[0]?["url"]?.ToString();
+
+            // מחזיר מחרוזת נקייה (בלי מרכאות כפולות)
+            return Ok(url);
         }
     }
 }

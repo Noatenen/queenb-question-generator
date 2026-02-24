@@ -1,142 +1,106 @@
 ﻿<!doctype html>
 <html lang="he" dir="rtl">
-
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>מחולל שאלות QueenB</title>
 
-    <!-- CSS -->
     <link rel="stylesheet" href="css/bootstrap.rtl.min.css" />
     <link rel="stylesheet" href="css/styles.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap" rel="stylesheet">
 </head>
 
 <body>
 <div class="qb-page">
-    <div class="container py-4">
 
-        <!-- כותרת -->
-        <header class="qb-header mb-4">
-            <h1 class="qb-title">מחולל שאלות QueenB</h1>
-            <p class="qb-subtitle">שאלות תרגול בסגנון QueenB</p>
-        </header>
+    <header class="qb-topbar">
+        <div class="qb-topbar-inner">
+            <div class="qb-topbar-logo">
+                <img src="images/qb-logo.png" alt="QueenB Logo" class="qb-logo-img">
+            </div>
+            <h1 class="qb-topbar-title">מערכת תרגול לחניכות queenb</h1>
+        </div>
+    </header>
 
-        <!-- בחירות -->
-        <section class="qb-controls mb-4">
-            <div class="row g-3 align-items-end">
+    <main class="qb-board">
+        <div class="qb-board-inner">
 
-                <!-- רמה -->
-                <div class="col-12 col-md-4">
-                    <label class="form-label qb-label">רמה</label>
-                    <select id="levelSelect" class="form-select qb-select">
-                        <option value="junior" selected>ג׳וניורס</option>
-                        <option value="senior">סניורס</option>
+            <section class="qb-chat" aria-label="צ'אט תרגול">
+
+                <!-- בועה 1 -->
+                <div class="qb-bot-bubble" id="levelCard">
+                    <p class="qb-bubble-title">היי אני, <br>בחרי את רמת הקושי:</p>
+
+                    <select id="levelSelect" class="form-select qb-select-soft">
+                        <option value="" selected disabled>בחרי רמה…</option>
+                        <option value="junior">ג׳וניורס (כיתה ח׳)</option>
+                        <option value="senior">סניורס (כיתה ט׳)</option>
                     </select>
                 </div>
 
-                <!-- סוג שאלה -->
-                <div class="col-12 col-md-4">
-                    <label class="form-label qb-label">סוג שאלה</label>
-                    <select id="typeSelect" class="form-select qb-select">
-                        <option value="mcq" selected>אמריקאית (3 תשובות)</option>
-                        <option value="open">פתוחה</option>
-                    </select>
-                </div>
+                <!-- בועת המשתמשת -->
+                <div id="chatReplies" class="qb-messages"></div>
 
-                <!-- כפתור -->
-                <div class="col-12 col-md-4 d-grid">
-                    <button id="btnGenerate" class="btn qb-btn-main" type="button">
-                        צור שאלה
-                    </button>
-                </div>
+                <!-- בועה 2 -->
+                <div class="qb-bot-bubble is-hidden" id="questionCard">
 
-            </div>
-        </section>
+                    <section id="questionArea">
+                        <div class="qb-q-box">
+                            <div class="qb-loading-overlay" id="loadingOverlay">
+                                    <div class="qb-spinner" aria-label="טוען"></div>
+                                    <p class="qb-loading-text">מכינה לך שאלה... 🤖</p>
+                            </div>
 
-        <!-- תוכן -->
-        <section class="qb-stage">
-            <div class="qb-question-wide">
-
-                <div class="qb-question-card">
-                    <!-- כותרת -->
-                    <h2 id="questionTitle" class="qb-q-title">מה תעשה הקוד הבא?</h2>
-
-                    <!-- שורת טקסט + תמונה קטנה משמאל -->
-                    <div class="qb-q-row">
-                        <div class="qb-q-textwrap">
-                            <p id="questionText" class="qb-q-text">
-                                בחרי רמה וסוג שאלה ואז לחצי "צור שאלה".
-                            </p>
+                            <p id="questionText" class="qb-q-text"></p>
                         </div>
 
-                        <div class="qb-q-imgmini">
-                            <img id="questionImg" class="qb-image" alt="תמונה לשאלה" />
-                            <div id="imgHint" class="qb-image-hint">כאן תופיע תמונה</div>
+                        <div id="questionContentWrapper" class="qb-question-content-wrapper" style="display:none;">
+                            <div class="qb-code-image-row">
+                                <div id="codeContainer" class="qb-code-wrap" style="display:none;">
+                                    <pre class="qb-code-block"><code id="codeBox"></code></pre>
+                                </div>
+
+                                <div id="imageContainer" class="qb-image-wrap" style="display:none;">
+                                    <img id="questionImg" class="qb-question-image img-fluid" alt="תמונת שאלה">
+                                </div>
+                            </div>
                         </div>
-                    </div>
+                    </section>
 
-                    <!-- הקוד (בדיוק במקום שהתמונה הייתה אצלך בעבר) -->
-                    <div class="qb-code-inline">
-                        <div class="qb-code-top">
-                            <span class="qb-code-label">הקוד</span>
+                    <section id="interactionArea" class="qb-interaction-area">
+
+                        <div id="confettiLayer" class="qb-confetti-layer" aria-hidden="true"></div>
+
+                        <div id="mcqArea" class="qb-answers-grid" style="display:none;">
+                            <button id="ans0" onclick="chooseOption(0)" class="qb-answer-btn" type="button"><span id="opt0"></span></button>
+                            <button id="ans1" onclick="chooseOption(1)" class="qb-answer-btn" type="button"><span id="opt1"></span></button>
+                            <button id="ans2" onclick="chooseOption(2)" class="qb-answer-btn" type="button"><span id="opt2"></span></button>
                         </div>
-                        <pre class="qb-code"><code id="codeBox" dir="ltr">// לחצי על "צור שאלה" כדי להתחיל 🙂</code></pre>
-                    </div>
 
-                    <!-- תשובות אמריקאיות -->
-                    <div id="mcqArea" class="qb-answers" style="display:none;">
-                        <button id="ans0" class="qb-answer" type="button" onclick="chooseOption(0)">
-                            <span class="qb-answer-num">1</span>
-                            <span id="opt0" class="qb-answer-text"></span>
+                        <div id="openArea" style="display:none;">
+                            <textarea id="openAnswer" class="form-control qb-open-textarea mb-3" rows="4" placeholder="כתבי את התשובה שלך כאן..."></textarea>
+                        </div>
+
+                        <div id="feedbackBox" class="qb-feedback-box" style="display:none;"></div>
+
+                        <button id="btnAction"
+                                onclick="handleActionButtonClick()"
+                                class="qb-action-btn w-100"
+                                data-state="next"
+                                style="display:none;">
+                            לשאלה הבאה ⬅️
                         </button>
 
-                        <button id="ans1" class="qb-answer" type="button" onclick="chooseOption(1)">
-                            <span class="qb-answer-num">2</span>
-                            <span id="opt1" class="qb-answer-text"></span>
-                        </button>
-
-                        <button id="ans2" class="qb-answer" type="button" onclick="chooseOption(2)">
-                            <span class="qb-answer-num">3</span>
-                            <span id="opt2" class="qb-answer-text"></span>
-                        </button>
-                    </div>
-
-                    <!-- שאלה פתוחה -->
-                    <div id="openArea" class="qb-open" style="display:none;">
-                        <label class="form-label qb-label mt-3">כתבי תשובה קצרה</label>
-                        <textarea id="openAnswer" class="form-control qb-textarea" rows="4"
-                                  placeholder="לדוגמה: יודפס..., כי..."></textarea>
-                        <button class="btn qb-btn-secondary mt-3" type="button" onclick="submitOpen()">
-                            שלחי תשובה
-                        </button>
-                    </div>
-
-                    <!-- משוב -->
-                    <div id="feedbackBox" class="qb-feedback" style="display:none;"></div>
-
-                    <!-- כפתורי פעולה (נסי שוב / שאלה נוספת) -->
-                    <div id="feedbackActions" class="qb-actions" style="display:none;">
-                        <button id="btnRetry" class="btn qb-btn-secondary" type="button" onclick="retryQuestion()">
-                            נסי שוב
-                        </button>
-
-                        <button id="btnNext" class="btn qb-btn-main" type="button" onclick="generateQuestion()">
-                            שאלה נוספת
-                        </button>
-                    </div>
-
+                    </section>
                 </div>
 
-            </div>
-        </section>
+            </section>
+        </div>
+    </main>
 
-
-    </div>
 </div>
 
-<!-- JS (רק כאן, בסוף) -->
 <script src="js/bootstrap.bundle.min.js"></script>
 <script src="js/javascript.js"></script>
 </body>
-
 </html>

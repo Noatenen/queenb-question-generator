@@ -1,461 +1,418 @@
 ﻿// ===============================
-// מצב גלובלי
+// QueenB Chat Quiz – FINAL
+// - Spinner fixed (CSS)
+// - Feedback white box via CSS classes only
+// - Reset wrong marks between attempts
+// - Explanation always shows if exists
+// - Confetti higher + nicer
+// - Hide next button while loading
 // ===============================
-var currentQuestion = null;
 
-// MCQ attempts
+// מצב גלובלי
+var currentQuestion = null;
 var MAX_ATTEMPTS = 2;
 var attemptsLeft = MAX_ATTEMPTS;
 var locked = false;
 
-// מאגרי נושאים לפי רמה (אפשר להרחיב)
-var juniorPool = [
-    { domain: "JavaScript", concept: "variables" },
-    { domain: "JavaScript", concept: "input_output" },
-    { domain: "JavaScript", concept: "conditions" },
-    { domain: "JavaScript", concept: "functions" },
-    { domain: "JavaScript", concept: "loops" },
-    { domain: "JavaScript", concept: "arrays" },
-    { domain: "HTML", concept: "basic_tags" },
-    { domain: "CSS", concept: "basic_selectors" }
-];
+// שרשור
+var previousResponseId = null;
 
-var seniorPool = [
-    { domain: "JavaScript", concept: "functions" },
-    { domain: "JavaScript", concept: "arrays" },
-    { domain: "JavaScript", concept: "objects" },
-    { domain: "JavaScript", concept: "events" },
-    { domain: "JavaScript", concept: "dom" }
-];
+// סוג שאלה שיוגרל
+var currentQuestionType = "mcq";
+
+// DOM
+var dom = {
+    levelSelect: document.getElementById("levelSelect"),
+    loadingOverlay: document.getElementById("loadingOverlay"),
+    questionCard: document.getElementById("questionCard"),
+    questionText: document.getElementById("questionText"),
+    questionContentWrapper: document.getElementById("questionContentWrapper"),
+    codeContainer: document.getElementById("codeContainer"),
+    codeBox: document.getElementById("codeBox"),
+    imageContainer: document.getElementById("imageContainer"),
+    questionImg: document.getElementById("questionImg"),
+    btnAction: document.getElementById("btnAction"),
+    mcqArea: document.getElementById("mcqArea"),
+    openArea: document.getElementById("openArea"),
+    openAnswer: document.getElementById("openAnswer"),
+    feedbackBox: document.getElementById("feedbackBox"),
+    chatReplies: document.getElementById("chatReplies"),
+    confettiLayer: document.getElementById("confettiLayer")
+};
+
+// init
+(function init() {
+    if (!dom.levelSelect) {
+        console.error("Missing #levelSelect in HTML");
+        return;
+    }
+
+    if (dom.questionCard) dom.questionCard.classList.add("is-hidden");
+    dom.levelSelect.addEventListener("change", onLevelChanged);
+})();
 
 // ===============================
-// DOM Ready
+// בחירת רמה
 // ===============================
-document.addEventListener("DOMContentLoaded", function () {
-    var btn = document.getElementById("btnGenerate");
-    if (btn) {
-        btn.addEventListener("click", function () {
-            generateQuestion();
+function onLevelChanged() {
+    if (!dom.levelSelect.value) return;
+
+    renderUserBubble(dom.levelSelect.options[dom.levelSelect.selectedIndex].text);
+
+    if (dom.questionCard) dom.questionCard.classList.remove("is-hidden");
+    if (dom.questionText) dom.questionText.innerText = "";
+
+    hideActionButton();
+
+    currentQuestionType = Math.random() < 0.5 ? "mcq" : "open";
+
+    setTimeout(function () {
+        generateQuestion();
+    }, 350);
+}
+
+function renderUserBubble(text) {
+    if (!dom.chatReplies) return;
+
+    dom.chatReplies.innerHTML = "";
+    var b = document.createElement("div");
+    b.className = "qb-user-bubble";
+    b.innerText = text;
+    dom.chatReplies.appendChild(b);
+}
+
+// ===============================
+// יצירת שאלה
+// ===============================
+async function generateQuestion() {
+    if (!dom.levelSelect || !dom.levelSelect.value) return;
+
+    setLoading(true);
+    resetUI(true);
+
+    try {
+        var requestBody = {
+            Level: dom.levelSelect.value,
+            QuestionType: currentQuestionType,
+            Domain: "JavaScript",
+            Concept: "general",
+            FileId: null,
+            PreviousResponseID: previousResponseId
+        };
+
+        var resQuestion = await fetch("/api/GPT/GPTChatFromPdf", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody)
         });
-    }
 
-    // מצב התחלתי של כפתורי משוב
-    setActionButtons(false, false);
-});
+        if (!resQuestion.ok) {
+            var errText = await resQuestion.text();
+            console.error("GPTChatFromPdf error:", errText);
+            showInlineError("אופס… משהו השתבש. נסי שוב.");
+            return;
+        }
 
-// ===============================
-// עזר: רנדומלי
-// ===============================
-function pickRandom(arr) {
-    var i = Math.floor(Math.random() * arr.length);
-    return arr[i];
-}
+        var data = await resQuestion.json();
+        previousResponseId = data.responseID;
 
-// ===============================
-// מצב טעינה
-// ===============================
-function setLoadingState(isLoading) {
-    var btn = document.getElementById("btnGenerate");
-    var qTitle = document.getElementById("questionTitle");
-    var qText = document.getElementById("questionText");
-    var codeBox = document.getElementById("codeBox");
+        currentQuestion = JSON.parse(data.text);
+        currentQuestion.questionType = currentQuestionType;
 
-    if (!btn || !qTitle || !qText || !codeBox) return;
+        await tryGenerateImage(currentQuestion);
 
-    if (isLoading) {
-        btn.disabled = true;
-        btn.innerText = "מייצרת שאלה...";
-        qTitle.innerText = "טוענת שאלה...";
-        qText.innerText = "עוד רגע 🙂";
-        codeBox.innerText = "// טוען קוד...";
-    } else {
-        btn.disabled = false;
-        btn.innerText = "צור שאלה";
+        renderQuestion(currentQuestion);
+    } catch (e) {
+        console.error("generateQuestion exception:", e);
+        showInlineError("אופס… משהו השתבש. נסי שוב.");
+    } finally {
+        setLoading(false);
     }
 }
 
-// ===============================
-// כפתורי משוב (נסי שוב / שאלה נוספת)
-// ===============================
-function setActionButtons(showRetry, showNext) {
-    var actions = document.getElementById("feedbackActions");
-    var btnRetry = document.getElementById("btnRetry");
-    var btnNext = document.getElementById("btnNext");
+async function tryGenerateImage(q) {
+    try {
+        var resImage = await fetch("/api/GPT/Dalle", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: "QueenB coding girl, " + (q.questionText || "") })
+        });
 
-    if (!actions || !btnRetry || !btnNext) return;
-
-    actions.style.display = (showRetry || showNext) ? "flex" : "none";
-    btnRetry.style.display = showRetry ? "inline-block" : "none";
-    btnNext.style.display = showNext ? "inline-block" : "none";
-}
-
-// ===============================
-// נעילה / פתיחה תשובות
-// ===============================
-function lockAnswers() {
-    locked = true;
-    for (var i = 0; i < 3; i++) {
-        var b = document.getElementById("ans" + i);
-        if (b) b.classList.add("is-disabled");
+        if (resImage.ok) {
+            var url = await resImage.text();
+            q.imageUrl = url.replaceAll('"', "");
+        }
+    } catch (e) {
+        // לא מפיל
     }
 }
 
-function unlockAnswers() {
+// ===============================
+// רינדור שאלה
+// ===============================
+function renderQuestion(q) {
+    if (!q) return;
+
+    if (dom.questionText) dom.questionText.innerText = q.questionText || "";
+
+    var hasContent = false;
+
+    if (q.code && dom.codeContainer && dom.codeBox) {
+        dom.codeBox.innerText = q.code;
+        dom.codeContainer.style.display = "block";
+        hasContent = true;
+    }
+
+    if (q.imageUrl && dom.imageContainer && dom.questionImg) {
+        dom.questionImg.src = q.imageUrl;
+        dom.imageContainer.style.display = "flex";
+        hasContent = true;
+    }
+
+    if (dom.questionContentWrapper) {
+        dom.questionContentWrapper.style.display = hasContent ? "block" : "none";
+    }
+
+    attemptsLeft = MAX_ATTEMPTS;
     locked = false;
+
+    resetAnswerStyles();
+
+    if (q.questionType === "mcq") showMCQ(q);
+    else showOpen();
+}
+
+function showMCQ(q) {
+    if (dom.mcqArea) dom.mcqArea.style.display = "flex";
+    if (dom.openArea) dom.openArea.style.display = "none";
+
+    hideActionButton();
+
+    for (var i = 0; i < 3; i++) {
+        var optSpan = document.getElementById("opt" + i);
+        if (optSpan) optSpan.innerText = (q.options && q.options[i] != null) ? q.options[i] : "";
+    }
+
+    for (var j = 0; j < 3; j++) {
+        var btn = document.getElementById("ans" + j);
+        if (btn) btn.style.pointerEvents = "auto";
+    }
+}
+
+function showOpen() {
+    if (dom.openArea) dom.openArea.style.display = "block";
+    if (dom.mcqArea) dom.mcqArea.style.display = "none";
+
+    showActionButton("שלחי תשובה ✅", "submit-open");
+}
+
+// ===============================
+// בחירת תשובה (MCQ)
+// ===============================
+function chooseOption(index) {
+    if (locked || !currentQuestion) return;
+
+    // בכל ניסיון חדש – לנקות רק אדומים קודמים
+    clearWrongMarksOnly();
+
+    var btn = document.getElementById("ans" + index);
+    if (!btn) return;
+
+    var isCorrect = (index === currentQuestion.correctIndex);
+
+    if (isCorrect) {
+        btn.classList.add("is-correct");
+        locked = true;
+
+        showFeedback("אלופה! תשובה נכונה 🎉", "success", getExplanationText(currentQuestion, true));
+        popConfetti();
+        showNextButton();
+    } else {
+        attemptsLeft--;
+        btn.classList.add("is-wrong");
+
+        if (attemptsLeft > 0) {
+            showFeedback("לא בדיוק… יש לך עוד ניסיון 💪", "try", "");
+        } else {
+            locked = true;
+
+            var rightBtn = document.getElementById("ans" + currentQuestion.correctIndex);
+            if (rightBtn) rightBtn.classList.add("is-correct");
+
+            showFeedback("הפעם לא, אבל לא נורא!", "error", getExplanationText(currentQuestion, false));
+            showNextButton();
+        }
+    }
+}
+
+// ===============================
+// כפתור פעולה
+// ===============================
+function handleActionButtonClick() {
+    if (!dom.btnAction) return;
+
+    var state = dom.btnAction.dataset.state;
+
+    if (state === "next") {
+        currentQuestionType = Math.random() < 0.5 ? "mcq" : "open";
+        generateQuestion();
+    } else if (state === "submit-open") {
+        var val = dom.openAnswer ? dom.openAnswer.value.trim() : "";
+        if (!val) {
+            showFeedback("אל תשכחי לכתוב משהו 😉", "try", "");
+            return;
+        }
+
+        showFeedback("קיבלתי!", "success", getExplanationText(currentQuestion, true));
+        popConfetti();
+        showNextButton();
+    }
+}
+
+function showNextButton() {
+    showActionButton("לשאלה הבאה ⬅️", "next");
+
     for (var i = 0; i < 3; i++) {
         var b = document.getElementById("ans" + i);
-        if (b) b.classList.remove("is-disabled");
+        if (b) b.style.pointerEvents = "none";
+    }
+}
+
+function showActionButton(text, state) {
+    if (!dom.btnAction) return;
+    dom.btnAction.style.display = "block";
+    dom.btnAction.innerText = text;
+    dom.btnAction.dataset.state = state;
+}
+
+function hideActionButton() {
+    if (!dom.btnAction) return;
+    dom.btnAction.style.display = "none";
+}
+
+// ===============================
+// UI helpers
+// ===============================
+function resetUI(isNewQuestion) {
+    if (dom.questionContentWrapper) dom.questionContentWrapper.style.display = "none";
+    if (dom.codeContainer) dom.codeContainer.style.display = "none";
+    if (dom.imageContainer) dom.imageContainer.style.display = "none";
+    if (dom.mcqArea) dom.mcqArea.style.display = "none";
+    if (dom.openArea) dom.openArea.style.display = "none";
+
+    if (dom.openAnswer) dom.openAnswer.value = "";
+
+    if (dom.feedbackBox) {
+        dom.feedbackBox.style.display = "none";
+        dom.feedbackBox.innerText = "";
+        dom.feedbackBox.classList.remove("is-success", "is-error", "is-try");
+    }
+
+    if (isNewQuestion) {
+        resetAnswerStyles();
+        hideActionButton();
     }
 }
 
 function resetAnswerStyles() {
     for (var i = 0; i < 3; i++) {
-        var b = document.getElementById("ans" + i);
-        if (!b) continue;
-        b.classList.remove("is-correct", "is-wrong");
-    }
-}
-
-function markAnswer(index, isCorrect) {
-    var b = document.getElementById("ans" + index);
-    if (!b) return;
-    if (isCorrect) b.classList.add("is-correct");
-    else b.classList.add("is-wrong");
-}
-
-// ===============================
-// נסי שוב
-// ===============================
-function retryQuestion() {
-    hideFeedback();
-    setActionButtons(false, false);
-    resetAnswerStyles();
-    unlockAnswers();
-}
-
-// ===============================
-// 1) יצירת שאלה מהשרת
-// ===============================
-async function generateQuestion() {
-    hideFeedback();
-    setActionButtons(false, false);
-    setLoadingState(true);
-
-    // reset state
-    attemptsLeft = MAX_ATTEMPTS;
-    locked = false;
-    resetAnswerStyles();
-    unlockAnswers();
-
-    var levelEl = document.getElementById("levelSelect");
-    var typeEl = document.getElementById("typeSelect");
-
-    if (!levelEl || !typeEl) {
-        showFeedback("חסר שדה רמה או סוג שאלה בדף.");
-        setLoadingState(false);
-        return;
-    }
-
-    var level = levelEl.value; // junior / senior
-    var qType = typeEl.value;  // mcq / open
-
-    var pool = (level === "senior") ? seniorPool : juniorPool;
-    var picked = pickRandom(pool);
-
-    var body = {
-        domain: picked.domain,
-        concept: picked.concept,
-        questionType: qType,
-        level: level
-    };
-
-    var url = "/api/GPT/GPTChat";
-
-    try {
-        var res = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body)
-        });
-
-        if (!res.ok) {
-            var errText = await res.text();
-            showFeedback("יש בעיה בבקשה לשרת:\n" + errText);
-            setLoadingState(false);
-            return;
-        }
-
-        var data = await res.json();
-        currentQuestion = data;
-
-        renderQuestion(data);
-        setLoadingState(false);
-
-        await generateImageForQuestion(body, data);
-
-    } catch (e) {
-        showFeedback("אופס 😅 משהו השתבש (בדקי Console).");
-        console.log(e);
-        setLoadingState(false);
-    }
-}
-
-// ===============================
-// 2) הצגת השאלה במסך
-// ===============================
-function renderQuestion(q) {
-    var titleEl = document.getElementById("questionTitle");
-    var textEl = document.getElementById("questionText");
-    var codeEl = document.getElementById("codeBox");
-
-    if (titleEl) titleEl.innerText = q.title || "שאלה";
-    if (textEl) textEl.innerText = q.questionText || "";
-    if (codeEl) codeEl.innerText = q.code || "";
-
-    var mcqArea = document.getElementById("mcqArea");
-    var openArea = document.getElementById("openArea");
-
-    if (mcqArea) mcqArea.style.display = "none";
-    if (openArea) openArea.style.display = "none";
-
-    // איפוס תמונה
-    resetQuestionImageUI();
-
-    // MCQ
-    if (q.questionType === "mcq") {
-        if (mcqArea) mcqArea.style.display = "flex";
-
-        var opt0 = document.getElementById("opt0");
-        var opt1 = document.getElementById("opt1");
-        var opt2 = document.getElementById("opt2");
-
-        if (q.options && q.options.length >= 3) {
-            if (opt0) opt0.innerText = q.options[0];
-            if (opt1) opt1.innerText = q.options[1];
-            if (opt2) opt2.innerText = q.options[2];
-        } else {
-            if (opt0) opt0.innerText = "";
-            if (opt1) opt1.innerText = "";
-            if (opt2) opt2.innerText = "";
+        var btn = document.getElementById("ans" + i);
+        if (btn) {
+            btn.classList.remove("is-correct", "is-wrong");
+            btn.style.pointerEvents = "auto";
         }
     }
+}
 
-    // OPEN
-    if (q.questionType === "open") {
-        if (openArea) openArea.style.display = "block";
-        var openAnswer = document.getElementById("openAnswer");
-        if (openAnswer) openAnswer.value = "";
+function clearWrongMarksOnly() {
+    for (var i = 0; i < 3; i++) {
+        var btn = document.getElementById("ans" + i);
+        if (btn) btn.classList.remove("is-wrong");
     }
 }
 
-// ===============================
-// 3) בחירת תשובה אמריקאית – 2 ניסיונות + כפתורים
-// ===============================
-function chooseOption(index) {
-    if (!currentQuestion) return;
-    if (currentQuestion.questionType !== "mcq") return;
-    if (locked) return;
+function setLoading(isLoading) {
+    if (dom.loadingOverlay) dom.loadingOverlay.classList.toggle("active", isLoading);
 
-    resetAnswerStyles();
+    // בזמן טעינה: לא להראות כפתור "לשאלה הבאה"
+    if (isLoading) hideActionButton();
+}
 
-    var isCorrect = (index === currentQuestion.correctIndex);
+function showFeedback(titleText, type, explanationText) {
+    if (!dom.feedbackBox) return;
 
-    if (isCorrect) {
-        markAnswer(index, true);
-        lockAnswers();
-        popConfetti(index);
-        showFeedback("אלופה! ✅ תשובה נכונה\n\n" + (currentQuestion.explanation || ""));
-        setActionButtons(false, true); // שאלה נוספת
-        return;
-    }
+    var finalText = titleText;
+    if (explanationText) finalText += "\n" + explanationText;
 
-    // טעות
-    attemptsLeft = attemptsLeft - 1;
-    markAnswer(index, false);
+    dom.feedbackBox.innerText = finalText;
+    dom.feedbackBox.style.display = "block";
 
-    if (attemptsLeft > 0) {
-        lockAnswers();
-        showFeedback("כמעט 🙂 ❌ לא נכון.\nיש לך עוד ניסיון אחד.");
-        setActionButtons(true, false); // נסי שוב
-        return;
-    }
+    dom.feedbackBox.classList.remove("is-success", "is-error", "is-try");
+    if (type === "success") dom.feedbackBox.classList.add("is-success");
+    else if (type === "try") dom.feedbackBox.classList.add("is-try");
+    else dom.feedbackBox.classList.add("is-error");
+}
 
-    // ניסיון 2: מסמנים גם את הנכונה
-    lockAnswers();
-    markAnswer(currentQuestion.correctIndex, true);
-    showFeedback("לא נורא 💗 הפעם זה לא זה.\n\n" + (currentQuestion.explanation || ""));
-    setActionButtons(false, true); // שאלה נוספת
+function showInlineError(msg) {
+    if (dom.questionText) dom.questionText.innerText = msg;
+    showActionButton("נסי שוב 🔄", "next");
 }
 
 // ===============================
-// 4) שאלה פתוחה (משוב מקומי)
+// Explanation extractor (robust)
 // ===============================
-function submitOpen() {
-    if (!currentQuestion) return;
-    if (currentQuestion.questionType !== "open") return;
+function getExplanationText(q, isSuccess) {
+    if (!q) return "";
 
-    var userTextEl = document.getElementById("openAnswer");
-    if (!userTextEl) return;
+    var exp =
+        q.explanation ||
+        q.explain ||
+        q.solution ||
+        q.feedback ||
+        q.rationale ||
+        "";
 
-    var userText = userTextEl.value;
-
-    if (!userText || userText.trim().length < 2) {
-        showFeedback("כתבי תשובה קצרה לפני שליחה 🙂");
-        return;
+    if (typeof exp === "object" && exp) {
+        if (isSuccess && exp.correct) return String(exp.correct);
+        if (!isSuccess && exp.wrong) return String(exp.wrong);
+        try { return JSON.stringify(exp); } catch (e) { return ""; }
     }
 
-    var msg = "קיבלתי 🙌\n\n";
-
-    if (currentQuestion.openAnswerExample) {
-        msg += "דוגמת תשובה:\n" + currentQuestion.openAnswerExample + "\n\n";
-    }
-
-    if (currentQuestion.expectedKeyPoints && currentQuestion.expectedKeyPoints.length > 0) {
-        msg += "נקודות שכדאי שיהיו בתשובה:\n";
-        for (var i = 0; i < currentQuestion.expectedKeyPoints.length; i++) {
-            msg += "• " + currentQuestion.expectedKeyPoints[i] + "\n";
-        }
-        msg += "\n";
-    }
-
-    msg += (currentQuestion.explanation || "");
-    showFeedback(msg);
-    setActionButtons(false, true); // שאלה נוספת
+    return String(exp || "").trim();
 }
 
 // ===============================
-// תמונה – UI
+// Confetti (higher burst)
 // ===============================
-function resetQuestionImageUI() {
-    var img = document.getElementById("questionImg");
-    var hint = document.getElementById("imgHint");
+function popConfetti() {
+    if (!dom.confettiLayer) return;
 
-    if (!img || !hint) return;
+    dom.confettiLayer.innerHTML = "";
 
-    img.style.display = "none";
-    img.src = "";
-    hint.style.display = "block";
-    hint.innerText = "מכינה תמונה לשאלה...";
-}
-
-// ===============================
-// 5) DALLE
-// ===============================
-async function generateImageForQuestion(bodyForQuestion, questionFromGPT) {
-    var img = document.getElementById("questionImg");
-    var hint = document.getElementById("imgHint");
-
-    if (!img || !hint) return;
-
-    img.style.display = "none";
-    hint.style.display = "block";
-    hint.innerText = "מייצרת תמונה...";
-
-    var prompt = buildImageHint(bodyForQuestion, questionFromGPT);
-
-    var body = { prompt: prompt };
-    var url = "/api/GPT/Dalle";
-
-    try {
-        var res = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body)
-        });
-
-        if (!res.ok) {
-            var err = await res.text();
-            hint.style.display = "block";
-            hint.innerText = "לא הצלחתי לייצר תמונה 😅";
-            console.log(err);
-            return;
-        }
-
-        var imageUrl = await res.text();
-        imageUrl = imageUrl.replaceAll("\"", "");
-
-        img.src = imageUrl;
-        img.style.display = "block";
-        hint.style.display = "none";
-
-    } catch (e) {
-        hint.style.display = "block";
-        hint.innerText = "לא הצלחתי לייצר תמונה 😅";
-        console.log(e);
-    }
-}
-
-function buildImageHint(bodyForQuestion, q) {
-    var base =
-        "Cute flat vector illustration of a teen girl programmer with a laptop, pastel pink background, purple accents, " +
-        "friendly educational vibe, clean simple shapes, NO text, NO letters, NO logos, NO watermark. ";
-
-    var d = bodyForQuestion && bodyForQuestion.domain ? bodyForQuestion.domain : "";
-    var c = bodyForQuestion && bodyForQuestion.concept ? bodyForQuestion.concept : "";
-
-    if (d === "HTML") return base + "Add a simple browser window and webpage layout icons (no text).";
-    if (d === "CSS") return base + "Add a color palette, layout grid, and styled card icons (no text).";
-
-    if (c === "arrays") return base + "Add small boxes in a row representing an array.";
-    if (c === "objects") return base + "Add small key-value cards icons (no text).";
-    if (c === "functions") return base + "Add flow arrows and connected blocks icons.";
-    if (c === "conditions") return base + "Add branching arrows and decision sign icons.";
-    if (c === "loops") return base + "Add circular arrows icons.";
-
-    return base + "Simple coding-themed background elements.";
-}
-
-// ===============================
-// קונפטי
-// ===============================
-function popConfetti(answerIndex) {
-    var btn = document.getElementById("ans" + answerIndex);
-    if (!btn) return;
-
-    // ניצור 18 חלקיקים
-    for (var i = 0; i < 18; i++) {
+    for (var i = 0; i < 22; i++) {
         var p = document.createElement("span");
         p.className = "qb-confetti";
 
-        // צבעים אקראיים נעימים
-        var colors = ["#6d5efc", "#ff4d6d", "#20c997", "#ffd43b", "#7dd3fc"];
+        p.style.right = (10 + Math.random() * 80) + "%";
+
+        p.style.width = (7 + Math.random() * 6) + "px";
+        p.style.height = (10 + Math.random() * 10) + "px";
+
+        var colors = ["#6d5efc", "#ff7fa0", "#20c997", "#ffd43b", "#ff4d6d"];
         p.style.background = colors[Math.floor(Math.random() * colors.length)];
 
-        // נגדיר את המשתנים שה־CSS מחפש (וככה גם ה־IDE פחות יתלונן)
-        var dx = (Math.random() * 160 - 80).toFixed(0) + "px";
-        var dy = (Math.random() * 160 - 80).toFixed(0) + "px";
-        var rot = (Math.random() * 260 - 130).toFixed(0) + "deg";
+        var rise = 160 + Math.random() * 120;      // יותר גבוה
+        var drift = (Math.random() * 140) - 70;    // יותר סטייה
 
-        p.style.setProperty("--dx", dx);
-        p.style.setProperty("--dy", dy);
-        p.style.setProperty("--rot", rot);
+        p.style.setProperty("--rise", rise + "px");
+        p.style.setProperty("--drift", drift + "px");
 
-        btn.appendChild(p);
+        p.style.animationDelay = (Math.random() * 120) + "ms";
 
-        // ניקוי
-        (function (node) {
-            setTimeout(function () {
-                if (node && node.parentNode) node.parentNode.removeChild(node);
-            }, 800);
-        })(p);
+        dom.confettiLayer.appendChild(p);
     }
-}
 
-// ===============================
-// משוב
-// ===============================
-function showFeedback(text) {
-    var box = document.getElementById("feedbackBox");
-    if (!box) return;
-
-    box.style.display = "block";
-    box.innerText = text;
-}
-
-function hideFeedback() {
-    var box = document.getElementById("feedbackBox");
-    if (!box) return;
-
-    box.style.display = "none";
-    box.innerText = "";
+    setTimeout(function () {
+        if (dom.confettiLayer) dom.confettiLayer.innerHTML = "";
+    }, 1400);
 }
